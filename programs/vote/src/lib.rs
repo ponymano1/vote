@@ -14,11 +14,13 @@ pub mod vote {
         poll_name: String,
         poll_description: String,
     ) -> Result<()> {
+        ctx.accounts.poll_account.creator = ctx.accounts.signer.key();
         ctx.accounts.poll_account.poll_name = poll_name;
         ctx.accounts.poll_account.poll_description = poll_description;
         ctx.accounts.poll_account.poll_voting_start = poll_voting_start;
         ctx.accounts.poll_account.poll_voting_end = poll_voting_end;
-        msg!("initialized poll: {:?}", ctx.program_id);
+        
+        msg!("initialized poll: {:?}, creator: {:?}", ctx.program_id, ctx.accounts.signer.key());
         Ok(())
     }
 
@@ -73,7 +75,8 @@ pub struct InitializeCandidate<'info> {
     #[account(
         mut,
         seeds = [b"poll".as_ref(), poll_id.to_le_bytes().as_ref()],
-        bump
+        bump,
+        constraint = poll_account.creator == signer.key() @ ErrorCode::Unauthorized
     )]
     pub poll_account: Account<'info, PollAccount>,
 
@@ -112,6 +115,7 @@ pub struct CandidateAccount {
 #[account]
 #[derive(InitSpace)]
 pub struct PollAccount {
+    pub creator: Pubkey,
     #[max_len(32)]
     pub poll_name: String,
     #[max_len(280)]
@@ -127,5 +131,6 @@ pub enum ErrorCode {
     VotingNotStarted,
     #[msg("voting has ended")]
     VotingEnded,
-
+    #[msg("unauthorized")]
+    Unauthorized,
 }
