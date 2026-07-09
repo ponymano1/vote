@@ -56,7 +56,7 @@ pub struct InitializePoll<'info> {
     #[account(mut)]
     pub signer: Signer<'info>,
     #[account(
-        init_if_needed,
+        init,
         payer = signer,
         space = 8 + PollAccount::INIT_SPACE,
         seeds = [b"poll".as_ref(), poll_id.to_le_bytes().as_ref()],
@@ -102,6 +102,16 @@ pub struct Vote<'info> {
 
     #[account(mut, seeds = [poll_id.to_le_bytes().as_ref(), candidate.as_ref()], bump)]
     pub candidate_account: Account<'info, CandidateAccount>,
+
+    #[account(
+        init,
+        payer = signer,
+        space = 8 + VoteRecord::INIT_SPACE,
+        seeds = [b"vote_record".as_ref(), poll_id.to_le_bytes().as_ref(), signer.key().as_ref()],
+        bump
+    )]
+    pub vote_record: Account<'info, VoteRecord>,
+    pub system_program: Program<'info, System>,
 }
 
 #[account]
@@ -123,6 +133,12 @@ pub struct PollAccount {
     pub poll_voting_start: u64,
     pub poll_voting_end: u64,
     pub poll_option_index: u64,
+}
+
+#[account]
+#[derive(InitSpace)]
+pub struct VoteRecord {
+    pub _dummy: u8,
 }
 
 #[error_code]
