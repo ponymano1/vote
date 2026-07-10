@@ -22,6 +22,32 @@ function candidateAddress(pollId: BN, candidate: string): PublicKey {
   )[0];
 }
 
+function voteRecordAddress(pollId: BN, voter: PublicKey): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [
+      Buffer.from("vote_record"),
+      pollId.toArrayLike(Buffer, "le", 8),
+      voter.toBuffer(),
+    ],
+    PROGRAM_ID,
+  )[0];
+}
+
+async function expectVoteToFail(
+  promise: Promise<string>,
+  messagePattern = /already in use|custom program error|0x0/i,
+) {
+  let failed = false;
+  try {
+    await promise;
+  } catch (err) {
+    failed = true;
+    const message = err instanceof Error ? err.message : String(err);
+    expect(message).to.match(messagePattern);
+  }
+  expect(failed).to.equal(true);
+}
+
 async function airdrop(
   connection: anchor.web3.Connection,
   pubkey: PublicKey,
@@ -95,6 +121,107 @@ describe("vote", () => {
     expect(candidateAccount.candidateVotes.toNumber()).to.equal(1);
   });
 
+  describe("one vote per user per poll", () => {
+    const VOTE_POLL_ID = new BN(200);
+    const OTHER_POLL_ID = new BN(201);
+    const voter = Keypair.generate();
+
+    before(async () => {
+      await airdrop(provider.connection, voter.publicKey);
+
+      for (const pollId of [VOTE_POLL_ID, OTHER_POLL_ID]) {
+        await program.methods
+          .initializePoll(
+            pollId,
+            new BN(0),
+            new BN(1893456000),
+            `Poll ${pollId.toString()}`,
+            "One vote per user test poll",
+          )
+          .rpc();
+
+        await program.methods.initializeCandidate(pollId, "Alice").rpc();
+        await program.methods.initializeCandidate(pollId, "Bob").rpc();
+      }
+    });
+
+    it("creates a vote record on the first vote", async () => {
+      const aliceAddress = candidateAddress(VOTE_POLL_ID, "Alice");
+      const recordAddress = voteRecordAddress(VOTE_POLL_ID, voter.publicKey);
+
+      await program.methods
+        .vote(VOTE_POLL_ID, "Alice")
+        .accountsPartial({
+          signer: voter.publicKey,
+        })
+        .signers([voter])
+        .rpc();
+
+      const candidateAccount =
+        await program.account.candidateAccount.fetch(aliceAddress);
+      const voteRecord = await program.account.voteRecord.fetch(recordAddress);
+
+      expect(candidateAccount.candidateVotes.toNumber()).to.equal(1);
+      expect(voteRecord).to.not.be.null;
+    });
+
+    it("rejects a second vote from the same user in the same poll", async () => {
+      const aliceAddress = candidateAddress(VOTE_POLL_ID, "Alice");
+      const bobAddress = candidateAddress(VOTE_POLL_ID, "Bob");
+
+      await expectVoteToFail(
+        program.methods
+          .vote(VOTE_POLL_ID, "Bob")
+          .accountsPartial({
+            signer: voter.publicKey,
+          })
+          .signers([voter])
+          .rpc(),
+      );
+
+      const aliceAccount =
+        await program.account.candidateAccount.fetch(aliceAddress);
+      const bobAccount = await program.account.candidateAccount.fetch(bobAddress);
+
+      expect(aliceAccount.candidateVotes.toNumber()).to.equal(1);
+      expect(bobAccount.candidateVotes.toNumber()).to.equal(0);
+    });
+
+    it("allows a different user to vote in the same poll", async () => {
+      const otherVoter = Keypair.generate();
+      await airdrop(provider.connection, otherVoter.publicKey);
+
+      const bobAddress = candidateAddress(VOTE_POLL_ID, "Bob");
+
+      await program.methods
+        .vote(VOTE_POLL_ID, "Bob")
+        .accountsPartial({
+          signer: otherVoter.publicKey,
+        })
+        .signers([otherVoter])
+        .rpc();
+
+      const bobAccount = await program.account.candidateAccount.fetch(bobAddress);
+      expect(bobAccount.candidateVotes.toNumber()).to.equal(1);
+    });
+
+    it("allows the same user to vote in a different poll", async () => {
+      const aliceAddress = candidateAddress(OTHER_POLL_ID, "Alice");
+
+      await program.methods
+        .vote(OTHER_POLL_ID, "Alice")
+        .accountsPartial({
+          signer: voter.publicKey,
+        })
+        .signers([voter])
+        .rpc();
+
+      const aliceAccount =
+        await program.account.candidateAccount.fetch(aliceAddress);
+      expect(aliceAccount.candidateVotes.toNumber()).to.equal(1);
+    });
+  });
+
   describe("access control", () => {
     const PERM_POLL_ID = new BN(100);
     const permPollAddress = pollAddress(PERM_POLL_ID);
@@ -145,12 +272,11 @@ describe("vote", () => {
     it("allows the poll creator to initialize a candidate", async () => {
       const charlieAddress = candidateAddress(PERM_POLL_ID, "Charlie");
 
-      await program.methods
-        .initializeCandidate(PERM_POLL_ID, "Charlie")
-        .rpc();
+      await program.methods.initializeCandidate(PERM_POLL_ID, "Charlie").rpc();
 
-      const candidateAccount =
-        await program.account.candidateAccount.fetch(charlieAddress);
+      const candidateAccount = await program.account.candidateAccount.fetch(
+        charlieAddress,
+      );
 
       expect(candidateAccount.candidateName).to.equal("Charlie");
       expect(candidateAccount.candidateVotes.toNumber()).to.equal(0);

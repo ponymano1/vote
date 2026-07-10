@@ -110,7 +110,7 @@ pub struct Vote<'info> {
         seeds = [b"vote_record".as_ref(), poll_id.to_le_bytes().as_ref(), signer.key().as_ref()],
         bump
     )]
-    pub vote_record: Account<'info, VoteRecord>,
+    pub vote_record: Account<'info, VoteRecord>,//用于验证投票是否存在，不需要实际存储数据，只是一个占位符
     pub system_program: Program<'info, System>,
 }
 
@@ -138,7 +138,7 @@ pub struct PollAccount {
 #[account]
 #[derive(InitSpace)]
 pub struct VoteRecord {
-    pub _dummy: u8,
+    pub _dummy: u8, //用于验证账户是否存在，不需要实际存储数据，只是一个占位符
 }
 
 #[error_code]
